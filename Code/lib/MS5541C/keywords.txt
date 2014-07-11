@@ -1,0 +1,5 @@
+MS5541C				KEYWORD1
+PressureTempPair	KEYWORD1
+initialize			KEYWORD2
+getPressurTemp		KEYWORD2
+generateClockSignal	KEYWORD2

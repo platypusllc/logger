@@ -1,6 +1,9 @@
+#include <SD.h>
+
 #include <Wire.h>
 #include <RTClib.h>
-#include <SD.h>
+#include <SPI.h>
+#include <MS5541C.h>
 
 
 //Logging configuration
@@ -11,6 +14,13 @@
 #define greenLEDpin 2
 #define yellowLEDpin 5
 #define redLEDpin 8
+
+//Instantiate Pressure Sensor object
+MS5541C pressureSensor;
+
+//Set last known temp and pressure
+long lastPressure = 0;
+float lastTemp = 0.0f;
 
 //Instantiate Real Time Clock object
 RTC_DS1307 RTC;
@@ -58,8 +68,17 @@ bool rtcConfig(){
   return true; 
 }
 void setup(void){
-  //Startup hardware serial
-  Serial.begin(38400);
+  /*
+  MOSI: pin 11
+  MISO: pin 12
+  SCLK: pin 13
+  MCLK: pin 9
+  */
+  pressureSensor.initialize(9, 13, 12, 11);
+  PressureTempPair measurement = pressureSensor.getPressureTemp();
+  lastPressure = measurement.pressure;
+  lastTemp = measurement.temperature;
+  
   
   //Set chip select pin to output
   pinMode(10, OUTPUT);
@@ -92,7 +111,7 @@ void setup(void){
     logfile.println("WARNING: RTC failed");
   }
   
-  logfile.println("millis,time,DO");
+  logfile.println("millis,time,pressure,temp,DO");
   /*if (logfile.writeError || !logfile.sync()){
     sdError("ERROR: Could not write header to card");
   }*/
@@ -110,6 +129,8 @@ void setup(void){
 }
 
 void loop(void){
+  pressureSensor.generateClockSignal();
+  
   DateTime now;
   
   delay((LOG_INTERVAL - 1) - (millis() % LOG_INTERVAL));
@@ -134,10 +155,28 @@ void loop(void){
   logfile.print(now.second(), DEC);
   logfile.print(",");
   
+  //Read Pressure Sensor
+  //PressureTempPair measurement = pressureSensor.getPressureTemp();
+  
+  //Prepare Command String
+  char commandString [10];
+  char tempString [5];
+  //dtostrf(measurement.temperature, 3, 2, tempString);
+  //sprintf(commandString, "%s,0\r", tempString);
+  
   
   //Read DO probe
   digitalWrite(yellowLEDpin, HIGH);
+  //Serial.print(commandString);
   Serial.print("R\r");
+  
+  //char pressureTempString [10];
+  //sprintf(pressureTempString, "%d,%s,", measurement.pressure, tempString);
+  logfile.print(lastPressure);
+  logfile.print(",");
+  logfile.print(lastTemp);
+  logfile.print(",");
+  
   delay(650);
   
   while (Serial.available()||!stringComplete){
@@ -147,6 +186,8 @@ void loop(void){
       stringComplete = true;
     }
   }
+  
+  //Serial.print("E\r");
   
   digitalWrite(yellowLEDpin, LOW);
   
@@ -164,6 +205,9 @@ void loop(void){
   // blink LED to show we are syncing data to the card & updating FAT!
   digitalWrite(redLEDpin, HIGH);
   logfile.flush();
+  //logfile.close();
+  //SD.end();
   digitalWrite(redLEDpin, LOW);
   digitalWrite(greenLEDpin, LOW);
+
 }   
