@@ -1,5 +1,4 @@
-#include <SD.h>
-
+#include <SoftwareSerial.h>
 #include <Wire.h>
 #include <RTClib.h>
 #include <SPI.h>
@@ -11,9 +10,8 @@
 #define SYNC_INTERVAL 1000 //Milliseconds between SD card flushes
 
 //LED pin definitions
-#define greenLEDpin 2
-#define yellowLEDpin 5
-#define redLEDpin 8
+#define LED1 3
+#define LED2 4
 
 //Instantiate Pressure Sensor object
 MS5541C pressureSensor;
@@ -25,14 +23,20 @@ float lastTemp = 0.0f;
 //Instantiate Real Time Clock object
 RTC_DS1307 RTC;
 
-//Digital pin 10 used for SD cs line
-const int chipSelect = 10;
+
+//OpenLog pin definitions
+#define RXPin 7
+#define TXPin 8
+#define resetPin 5
+
+//Initialize Software Serial for SD communication
+SoftwareSerial SDCardSerial(TXPin, RXPin);
 
 //RTC Config Filename
 char rtcConfigFile[] = "RTC.cfg";
 
 //Instantiate File object for logfile
-File logfile;
+//File logfile;
 
 //Set last sync time
 uint32_t syncTime = 0;
@@ -45,25 +49,38 @@ bool stringComplete = false;
 void sdError(char *str){
   //todo: display string
   
-  digitalWrite(redLEDpin, HIGH);
+  digitalWrite(LED2, HIGH);
   
   while(1);
 }
 
-//Wait For SD function - Waits until a working sd card is inserted and initialized
+//Wait For SD function - Resets logger and waits for "<" symbol
 void waitForSD(void){
-  while (!SD.begin(chipSelect)){
-    digitalWrite(yellowLEDpin, HIGH);
-    delay(3000);
-    digitalWrite(yellowLEDpin, LOW);
+  pinMode(resetPin, OUTPUT);
+  SDCardSerial.begin(9600);
+
+  //Reset OpenLog
+  digitalWrite(resetPin, LOW);
+  delay(100);
+  digitalWrite(resetPin, HIGH);
+
+  //Wait for OpenLog to respond with '<' to indicate it is alive and recording to a file
+  while(1) {
+    digitalWrite(LED1, HIGH);
+    if(SDCardSerial.available()){
+      if(SDCardSerial.read() == '<') break;
+    }
+    delay(100);
+    digitalWrite(LED1, LOW);
+    delay(100);
   }
+  digitalWrite(LED1, LOW);
+
 }
 
 //RTC Configuration function - configures RTC according to info found in RTC.cfg
 bool rtcConfig(){
-  if (!SD.exists(rtcConfigFile)){
-    return true;
-  }
+
   
   return true; 
 }
@@ -79,15 +96,15 @@ void setup(void){
   lastPressure = measurement.pressure;
   lastTemp = measurement.temperature;
   
-  
+   
   //Set chip select pin to output
-  pinMode(10, OUTPUT);
+  //pinMode(10, OUTPUT);
   
   //Attempt to initialize SD card
   waitForSD();
   
   //Check for RTC config file and use it to set the clock if present
-  if (SD.exists(rtcConfigFile)){
+  /*if (SD.exists(rtcConfigFile)){
     rtcConfig();
   }
   
@@ -104,21 +121,23 @@ void setup(void){
   
   if (!logfile){
     sdError("ERROR: Could not create log file");
-  }
+  }*/
   
   Wire.begin();
   if (!RTC.begin()){
-    logfile.println("WARNING: RTC failed");
+    SDCardSerial.println("WARNING: RTC failed");
   }
   
-  logfile.println("millis,time,pressure,temp,DO");
+  //RTC.adjust(DateTime(__DATE__, __TIME__));
+
+  
+  SDCardSerial.println("Uptime(mS),DateTime,Pressure(bar),Temp(C),DO(mg/L)");
   /*if (logfile.writeError || !logfile.sync()){
     sdError("ERROR: Could not write header to card");
   }*/
   
-  pinMode(greenLEDpin, OUTPUT);
-  pinMode(yellowLEDpin, OUTPUT);
-  pinMode(redLEDpin, OUTPUT);
+  pinMode(LED1, OUTPUT);
+  pinMode(LED2, OUTPUT);
   
   //Start Hardware serial for communication to DO Probe
   Serial.begin(38400);
@@ -135,47 +154,44 @@ void loop(void){
   
   delay((LOG_INTERVAL - 1) - (millis() % LOG_INTERVAL));
   
-  digitalWrite(greenLEDpin, HIGH);
-  
   uint32_t m = millis();
-  logfile.print(m);
-  logfile.print(",");
+  SDCardSerial.print(m);
+  SDCardSerial.print(",");
   
   now = RTC.now();
-  logfile.print(now.year(), DEC);
-  logfile.print("/");
-  logfile.print(now.month(), DEC);
-  logfile.print("/");
-  logfile.print(now.day(), DEC);
-  logfile.print(" ");
-  logfile.print(now.hour(), DEC);
-  logfile.print(":");
-  logfile.print(now.minute(), DEC);
-  logfile.print(":");
-  logfile.print(now.second(), DEC);
-  logfile.print(",");
+  SDCardSerial.print(now.year(), DEC);
+  SDCardSerial.print("/");
+  SDCardSerial.print(now.month(), DEC);
+  SDCardSerial.print("/");
+  SDCardSerial.print(now.day(), DEC);
+  SDCardSerial.print(" ");
+  SDCardSerial.print(now.hour(), DEC);
+  SDCardSerial.print(":");
+  SDCardSerial.print(now.minute(), DEC);
+  SDCardSerial.print(":");
+  SDCardSerial.print(now.second(), DEC);
+  SDCardSerial.print(",");
   
   //Read Pressure Sensor
-  //PressureTempPair measurement = pressureSensor.getPressureTemp();
+  PressureTempPair measurement = pressureSensor.getPressureTemp();
   
   //Prepare Command String
   char commandString [10];
   char tempString [5];
-  //dtostrf(measurement.temperature, 3, 2, tempString);
+  dtostrf(measurement.temperature, 3, 2, tempString);
   //sprintf(commandString, "%s,0\r", tempString);
   
   
   //Read DO probe
-  digitalWrite(yellowLEDpin, HIGH);
+  //digitalWrite(yellowLEDpin, HIGH);
   //Serial.print(commandString);
   Serial.print("R\r");
   
-  //char pressureTempString [10];
-  //sprintf(pressureTempString, "%d,%s,", measurement.pressure, tempString);
-  logfile.print(lastPressure);
-  logfile.print(",");
-  logfile.print(lastTemp);
-  logfile.print(",");
+  SDCardSerial.print(measurement.pressure);
+  SDCardSerial.print(",");
+  SDCardSerial.print(tempString);
+  SDCardSerial.print(",");
+
   
   delay(650);
   
@@ -189,25 +205,11 @@ void loop(void){
   
   //Serial.print("E\r");
   
-  digitalWrite(yellowLEDpin, LOW);
+  //digitalWrite(yellowLEDpin, LOW);
   
   //Write sensor data to card and clear buffer and flag
-  logfile.print(sensorString);
+  SDCardSerial.print(sensorString);
   sensorString = "";
   stringComplete = false;
-  
-  //Skip flush if sync interval has not been reached
-  if ((millis() - syncTime) < SYNC_INTERVAL){
-    return;
-  }
-  syncTime = millis();
-  
-  // blink LED to show we are syncing data to the card & updating FAT!
-  digitalWrite(redLEDpin, HIGH);
-  logfile.flush();
-  //logfile.close();
-  //SD.end();
-  digitalWrite(redLEDpin, LOW);
-  digitalWrite(greenLEDpin, LOW);
 
 }   
